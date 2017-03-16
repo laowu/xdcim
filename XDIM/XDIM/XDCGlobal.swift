@@ -12,3 +12,8 @@ import UIKit
 let ipAddress:String = ""
 let hostAdress:String = "baidu.com"
 let portNUM:UInt16 = 80
+
+
+//pacakge length
+let headerLEN: UInt = 12
+let verificationLEN: UInt = 64

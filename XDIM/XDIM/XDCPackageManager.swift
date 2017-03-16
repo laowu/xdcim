@@ -19,8 +19,8 @@ class XDCPackageManager{
 
     //将包头参数和包数据contentData拼接为完整包packageData
     func packData(utilCode: UInt16, subUtilCode: UInt16, packageID: UInt32, contentData: Data, dataLength: UInt32) -> Data{
-        var packageHeader: PackageHeader = PackageHeader(utilCode: utilCode, subUtilCode: subUtilCode, packageID: packageID)
-        var packageData: Data = Data(bytes: &packageHeader, count: MemoryLayout<PackageHeader>.size)
+        var dataHeader: DataHeader = DataHeader(utilCode: utilCode, subUtilCode: subUtilCode, packageID: packageID)
+        var packageData: Data = Data(bytes: &dataHeader, count: MemoryLayout<DataHeader>.size)
         packageData.append(contentData)
         return packageData
     }
@@ -29,8 +29,8 @@ class XDCPackageManager{
         
         var pacakgeData: Data?
         
-        if (package.count > MemoryLayout<PackageHeader>.size){
-            pacakgeData = package.subdata(in: MemoryLayout<PackageHeader>.size..<package.count)
+        if (package.count > MemoryLayout<DataHeader>.size){
+            pacakgeData = package.subdata(in: MemoryLayout<DataHeader>.size..<package.count)
         }
         return pacakgeData
     }

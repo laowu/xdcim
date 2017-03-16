@@ -15,6 +15,12 @@ enum ConnectionStatus {
     case disconnected
 }
 
+enum PackageSegementTag: Int{
+    case header = 100
+    case payload = 200
+
+}
+
 class XDCConnectionManager: NSObject, GCDAsyncSocketDelegate
 {
     var port: UInt16 = 80
@@ -24,7 +30,13 @@ class XDCConnectionManager: NSObject, GCDAsyncSocketDelegate
     var reconnectCount: UInt16 = 0
     var reconnectTimer: Timer?
     
-    var dataBuffer: Data?
+    var packageBuffer: NSMutableData?
+    var headerBuffer: Data?
+    var dataSegementLEN: UInt = 0
+    
+    
+    
+    
     
     //单例
     static let sharedInstance: XDCConnectionManager = {
@@ -77,18 +89,67 @@ class XDCConnectionManager: NSObject, GCDAsyncSocketDelegate
         }
     
     }
-    
-    func receivePackageData(sock: GCDAsyncSocket) -> Data?{
-        //self.socket?.read
-        var tmpData: Data?
+
+    // MARK: - managePackageData
+    //获取包头 转入didread
+    func getPackageHeader(socket: GCDAsyncSocket){
+        socket.readData(toLength: headerLEN, withTimeout: -1, buffer: packageBuffer, bufferOffset: 0, tag: PackageSegementTag.header.rawValue)
+    }
+    //解析包头
+    //read to length
+    func resolvePackageHeader(packageHeaderData: Data) -> PackageHeader? {
+        var packageHeader: PackageHeader?
+        if (packageHeaderData.count == Int(headerLEN)){
         
-        sock.readData(to: <#T##Data#>, withTimeout: <#T##TimeInterval#>, buffer: <#T##NSMutableData?#>, bufferOffset: <#T##UInt#>, tag: <#T##Int#>)
-        
-        return tmpData
-        
+            let versionCode: UInt8 = packageHeaderData.withUnsafeBytes{$0.pointee}
+            let cryptType: UInt8 = packageHeaderData.withUnsafeBytes{($0+1).pointee}
+            let packageID: UInt16 = packageHeaderData.withUnsafeBytes{($0+1).pointee}
+            let dataSegementLEN: UInt32 = packageHeaderData.withUnsafeBytes{($0+1).pointee}
+            let packageNUM: UInt32 = packageHeaderData.withUnsafeBytes{($0+2).pointee}
+            packageHeader = PackageHeader(versionCode: versionCode, cryptType: cryptType, packageID: packageID, dataSegementLEN: dataSegementLEN, packageNUM: packageNUM)
+        }else{
+            XDCLog("packageHeaderData ERR")
+        }
+        return packageHeader
     }
     
+    //根据包头中数据长度接收完整包
+    func getPackagePayload(socket: GCDAsyncSocket){
+        let packageFullLength = dataSegementLEN + verificationLEN
+        if let buffer = self.packageBuffer{
+            let bufferOffset = UInt(buffer.length)
+            socket.readData(toLength: UInt(packageFullLength), withTimeout: -1, buffer: buffer, bufferOffset: bufferOffset, tag: PackageSegementTag.payload.rawValue)
+        }
+    }
     
+    //解析数据头部 dataHeader
+    func resolveDataHeader(payloadData: Data) -> DataHeader? {
+        var dataHeader: DataHeader?
+        if(payloadData.count > Int(headerLEN))
+        {
+            let utilCode: UInt16 = payloadData.withUnsafeBytes{$0.pointee}
+            let subUtilCode: UInt16 = payloadData.withUnsafeBytes{($0+1).pointee}
+            let packageID: UInt32 = payloadData.withUnsafeBytes{($0+1).pointee}
+        
+            dataHeader = DataHeader(utilCode: utilCode, subUtilCode: subUtilCode, packageID: packageID)
+            
+        }else{
+            XDCLog("payloadData ERR")
+        }
+        return dataHeader
+    }
+    //解析 dataHeader dataHeader data
+    func resolvePackagePayload(packagePayload: Data, dataHeader: inout DataHeader?, dataContent: inout Data?){
+        
+        let rangeFrom = Int(headerLEN)
+        let rangeTo = Int(headerLEN + self.dataSegementLEN)
+        //dataHeader + dataContent
+        let data = packagePayload.subdata(in: rangeFrom..<rangeTo)
+        
+        dataHeader = resolveDataHeader(payloadData: data)
+        dataContent = data.subdata(in: 12..<data.count)
+    
+    }
     
     //socket?.writeData(msgTF.text?.dataUsingEncoding(NSUTF8StringEncoding), withTimeout: -1, tag: 0)
     
@@ -106,13 +167,39 @@ class XDCConnectionManager: NSObject, GCDAsyncSocketDelegate
     func socket(_ sock: GCDAsyncSocket, didRead data: Data, withTag tag: Int) {
         //get data from server
         
-        
-        
-        if let strReceived = String(data: data, encoding: .utf8){
-            print(strReceived)
+        switch tag {
+        case PackageSegementTag.header.rawValue:
+            //接收数据为包头
+            if let packageHeader = resolvePackageHeader(packageHeaderData: data){
+                print("get header")
+                self.dataSegementLEN = UInt(packageHeader.dataSegementLEN)
+                
+                //继续接收数据部分
+                getPackagePayload(socket: sock)
+            }else{
+                XDCLog("resolvePackageHeader ERR")
+            }
+            
+        case PackageSegementTag.payload.rawValue:
+            //接收数据为包内容
+            //数据部分头部
+            var dataHeader: DataHeader?
+            //数据部分内容
+            var dataContent: Data?
+            resolvePackagePayload(packagePayload: data, dataHeader: &dataHeader, dataContent: &dataContent)
+            
+        default:
+            if let strReceived = String(data: data, encoding: .utf8){
+                XDCLog("readDataDefault")
+                print(strReceived)
+            }else{
+                XDCLog("readData ERR")
+            }
         }
         
-        sock.readData(withTimeout: -1, tag: 0)
+
+        
+        //sock.readData(withTimeout: -1, tag: 0)
     }
     
     func socketDidDisconnect(_ sock: GCDAsyncSocket, withError err: Error?) {
